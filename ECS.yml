@@ -1,0 +1,162 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  ALIAS:
+    Type: String
+    Description: Alias for Route 53 Record Set
+    Default: jyoti
+
+Resources:
+  ECSFargateService:
+    Type: AWS::ECS::Service
+    DependsOn: LoadBalancer
+    Properties:
+      Cluster: Java
+      LaunchType: FARGATE
+      TaskDefinition: 
+        Ref: ECSFargateTaskDefinition
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets:
+            - subnet-0a85b9ced6cdd5bab
+            - subnet-05f04f9bbf90ddc4b
+          SecurityGroups:
+            - !Ref ECSServiceSecurityGroup
+          AssignPublicIp: ENABLED  # Enable this for internet access
+      LoadBalancers:
+        - ContainerName: Java
+          ContainerPort: 80
+          TargetGroupArn: !Ref TargetGroup
+
+  ECSFargateTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: Java
+      Cpu: 256
+      ExecutionRoleArn: !Ref ECSTaskExecutionRole
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ContainerDefinitions:
+        - Name: Java
+          Image: 767397830848.dkr.ecr.us-east-1.amazonaws.com/java:latest
+          PortMappings:
+            - ContainerPort: 80  # Adjust this to match your app's port
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ECSLogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: "Java"
+
+  ECSLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${AWS::StackName}/Java"
+
+  ECSServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: vpc-0d8bd54c7ed7b850f
+      GroupDescription: Security Group for ECS Service
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+
+  LBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: vpc-0d8bd54c7ed7b850f
+      GroupDescription: Security Group for ECS Service
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly  # Added ECR ReadOnly policy
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Subnets:
+        - subnet-0a85b9ced6cdd5bab
+        - subnet-05f04f9bbf90ddc4b
+      SecurityGroups:
+        - !Ref LBSecurityGroup
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 80  # Adjust this to match your app's port
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: vpc-0d8bd54c7ed7b850f
+
+  LoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref TargetGroup
+          Type: forward
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  HTTPSListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref TargetGroup
+          Type: forward
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: "arn:aws:acm:us-east-1:767397830848:certificate/ad70184b-f8e8-4d15-a11a-e4aa846b6747"
+
+  DNSRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: "gadar.life."
+      Name: !Sub "${ALIAS}.gadar.life."
+      Type: CNAME
+      TTL: 300
+      ResourceRecords:
+        - !GetAtt LoadBalancer.DNSName
+
+Outputs:
+  LoadBalancerUrl:
+    Value: !Sub "https://${LoadBalancer.DNSName}/"
+    Description: URL of the Load Balancer
